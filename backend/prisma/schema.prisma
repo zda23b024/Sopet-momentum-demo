@@ -1,0 +1,739 @@
+// Prisma schema for SOPET Momentum
+// PostgreSQL database with full historical tracking and privacy separation
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==========================================
+// 1. AUTHENTICATION, ROLES & SESSIONS
+// ==========================================
+
+enum UserRoleType {
+  USER
+  SUPPORT_ADMIN
+  SECURITY_ADMIN
+  KNOWLEDGE_ADMIN
+  ANALYTICS_ADMIN
+  PRODUCT_ADMIN
+  SYSTEM_OWNER
+}
+
+enum PrivacyMode {
+  STANDARD_PRIVATE
+  ENCRYPTED_PRIVATE
+  HIGHLY_CONFIDENTIAL
+}
+
+model User {
+  id                    String              @id @default(uuid())
+  email                 String              @unique
+  passwordHash          String              // Argon2id hash
+  fullName              String?
+  isActive              Boolean             @default(true)
+  isEmailVerified       Boolean             @default(false)
+  emailVerificationToken String?
+  passwordResetToken    String?
+  passwordResetExpiresAt DateTime?
+  
+  // MFA (TOTP)
+  mfaEnabled            Boolean             @default(false)
+  mfaSecret             String?             // Encrypted TOTP secret
+  mfaRecoveryCodes      String[]            // Hashed recovery codes
+
+  // Privacy Level
+  privacyMode           PrivacyMode         @default(STANDARD_PRIVATE)
+
+  // Timestamps
+  createdAt             DateTime            @default(now())
+  updatedAt             DateTime            @updatedAt
+  lastLoginAt           DateTime?
+
+  // Relations
+  profile               UserProfile?
+  userRoles             UserRole[]
+  sessions              Session[]
+  securityEvents        SecurityEvent[]
+  auditLogs             AuditLog[]          @relation("UserAuditLogs")
+  goals                 Goal[]
+  actions               Action[]
+  reviews               WeeklyReview[]
+  lessons               Lesson[]
+  analyticsEvents       AnalyticsEvent[]
+  notificationPref      NotificationPreference?
+  encryptionKeyMetadata EncryptionKeyMetadata[]
+  deletionRequests      AccountDeletionRequest[]
+
+  @@index([email])
+  @@index([createdAt])
+  @@index([isActive])
+}
+
+model UserProfile {
+  id          String   @id @default(uuid())
+  userId      String   @unique
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  displayName String?
+  timezone    String   @default("UTC")
+  locale      String   @default("en")
+  theme       String   @default("system")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Role {
+  id          String           @id @default(uuid())
+  name        UserRoleType     @unique
+  description String
+  userRoles   UserRole[]
+  permissions RolePermission[]
+}
+
+model Permission {
+  id          String           @id @default(uuid())
+  code        String           @unique // e.g. "goal.read_own", "admin.metrics.view"
+  description String
+  roles       RolePermission[]
+}
+
+model UserRole {
+  id        String   @id @default(uuid())
+  userId    String
+  roleId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      Role     @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, roleId])
+}
+
+model RolePermission {
+  id           String     @id @default(uuid())
+  roleId       String
+  permissionId String
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+}
+
+model Session {
+  id             String    @id @default(uuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  refreshTokenHash String  // Hashed refresh token to detect reuse
+  userAgent      String?
+  ipAddress      String?
+  isRevoked      Boolean   @default(false)
+  expiresAt      DateTime
+  createdAt      DateTime  @default(now())
+  lastActiveAt   DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model SecurityEvent {
+  id          String   @id @default(uuid())
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  eventType   String   // FAILED_LOGIN, SUSPICIOUS_SESSION, REFRESH_REUSE, MFA_TRIGGERED
+  severity    String   // LOW, MEDIUM, HIGH, CRITICAL
+  ipAddress   String?
+  userAgent   String?
+  detailsJson String?  // Sanitized metadata (NO private passwords or tokens)
+  createdAt   DateTime @default(now())
+
+  @@index([eventType])
+  @@index([createdAt])
+  @@index([userId])
+}
+
+// ==========================================
+// 2. CORE SOPET GOALS & MILESTONES
+// ==========================================
+
+enum GoalStatus {
+  NOT_STARTED
+  ACTIVE
+  PAUSED
+  COMPLETED
+  DISCONTINUED
+}
+
+model Goal {
+  id                   String              @id @default(uuid())
+  userId               String
+  user                 User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title                String
+  description          String?
+  whyItMatters         String?             // Private developmental rationale
+  status               GoalStatus          @default(ACTIVE)
+  isPrimary            Boolean             @default(false)
+  targetDate           DateTime?
+  
+  // Privacy / Client-Side Encryption flags
+  isClientEncrypted    Boolean             @default(false)
+  ciphertextPayload    String?             // Encrypted payload if client encryption active
+  encryptionMetadata   String?             // JSON { iv, salt, tag, keyId }
+
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  // Relations
+  statusHistory        GoalStatusHistory[]
+  milestones           Milestone[]
+  actions              Action[]
+  kpis                 KPI[]
+  reviews              WeeklyReview[]
+  interruptions        Interruption[]
+  lessons              Lesson[]
+
+  @@index([userId])
+  @@index([status])
+}
+
+model GoalStatusHistory {
+  id         String     @id @default(uuid())
+  goalId     String
+  goal       Goal       @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  oldStatus  GoalStatus
+  newStatus  GoalStatus
+  reason     String?
+  changedAt  DateTime   @default(now())
+
+  @@index([goalId])
+}
+
+model Milestone {
+  id          String   @id @default(uuid())
+  goalId      String
+  goal        Goal     @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  orderIndex  Int      @default(0)
+  isCompleted Boolean  @default(false)
+  targetDate  DateTime?
+  completedAt DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  actions     Action[]
+
+  @@index([goalId])
+}
+
+// ==========================================
+// 3. ACTIONS, NMAs & READINESS
+// ==========================================
+
+enum ActionStatus {
+  PENDING
+  READY
+  IN_PROGRESS
+  BLOCKED
+  COMPLETED
+  CANCELLED
+}
+
+model Action {
+  id                   String                  @id @default(uuid())
+  userId               String
+  user                 User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goalId               String
+  goal                 Goal                    @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  milestoneId          String?
+  milestone            Milestone?              @relation(fields: [milestoneId], references: [id], onDelete: SetNull)
+
+  title                String
+  description          String?
+  status               ActionStatus            @default(PENDING)
+  isNMA                Boolean                 @default(false) // Current Next Meaningful Action
+  scheduledDate        DateTime?
+  estimatedMinutes     Int?
+  
+  // Privacy
+  isClientEncrypted    Boolean                 @default(false)
+  ciphertextPayload    String?
+  encryptionMetadata   String?
+
+  // Timestamps
+  startedAt            DateTime?
+  completedAt          DateTime?
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+
+  // Relations
+  statusHistory        ActionStatusHistory[]
+  nmaRecords           NMARecord[]
+  readinessAssessments ReadinessAssessment[]
+  barriers             Barrier[]
+  interventions        ActionIntervention[]
+  mmaChildActions      MMA[]                   @relation("ParentAction")
+
+  @@index([userId])
+  @@index([goalId])
+  @@index([status])
+  @@index([isNMA])
+}
+
+model ActionStatusHistory {
+  id         String       @id @default(uuid())
+  actionId   String
+  action     Action       @relation(fields: [actionId], references: [id], onDelete: Cascade)
+  oldStatus  ActionStatus
+  newStatus  ActionStatus
+  notes      String?
+  changedAt  DateTime     @default(now())
+
+  @@index([actionId])
+}
+
+model NMARecord {
+  id           String    @id @default(uuid())
+  actionId     String
+  action       Action    @relation(fields: [actionId], references: [id], onDelete: Cascade)
+  designatedAt DateTime  @default(now())
+  completedAt  DateTime?
+  supersededAt DateTime?
+  rationale    String?
+
+  @@index([actionId])
+}
+
+enum ReadinessVerdict {
+  READY
+  NEEDS_CLARIFICATION
+  CAPABILITY_CONCERN
+  RESOURCE_CONCERN
+  DEPENDENCY_CONCERN
+  INTERNAL_RESISTANCE
+}
+
+model ReadinessAssessment {
+  id                     String           @id @default(uuid())
+  actionId               String
+  action                 Action           @relation(fields: [actionId], references: [id], onDelete: Cascade)
+  
+  // 5 Diagnostic Questions
+  clearlyUnderstood      Boolean          // 1. Do I clearly understand the action?
+  knowsHowToDo           Boolean          // 2. Do I know how to do it?
+  hasResources           Boolean          // 3. Do I have the necessary resources?
+  prerequisitesMet       Boolean          // 4. Is anything else required first?
+  internalResistanceLow  Boolean          // 5. Is emotional resistance manageable?
+
+  provisionalVerdict     ReadinessVerdict
+  notes                  String?
+  assessedAt             DateTime         @default(now())
+
+  @@index([actionId])
+}
+
+// ==========================================
+// 4. ACIF BARRIER TAXONOMY, INTERVENTIONS & MMA
+// ==========================================
+
+enum BarrierCategoryCode {
+  UNCLEAR_NEXT_STEP
+  CAPABILITY_GAP
+  RESOURCE_GAP
+  DEPENDENCY
+  OVERWHELM
+  SELF_DOUBT
+  FEAR_RESISTANCE
+  PERFECTIONISM
+  LOW_MOTIVATION
+  PRIORITY_CONFLICT
+  ENVIRONMENTAL_BARRIER
+  MEANING_DIRECTION_CONCERN
+  OTHER_UNSURE
+}
+
+model BarrierDefinition {
+  id                  String               @id @default(uuid())
+  code                BarrierCategoryCode  @unique
+  name                String
+  description         String
+  discriminatingQuestion String
+  language            String               @default("en")
+  version             Int                  @default(1)
+  isPublished         Boolean              @default(true)
+  barriers            Barrier[]
+  interventions       Intervention[]
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+}
+
+model Barrier {
+  id                    String               @id @default(uuid())
+  actionId              String
+  action                Action               @relation(fields: [actionId], references: [id], onDelete: Cascade)
+  categoryCode          BarrierCategoryCode
+  definition            BarrierDefinition?   @relation(fields: [categoryCode], references: [code])
+  
+  // Free-text diagnostic from user (Protected / Private)
+  userExplanation       String
+  isClientEncrypted     Boolean              @default(false)
+  ciphertextExplanation String?
+  encryptionMetadata    String?
+
+  // AI Suggestion Metadata
+  aiSuggestedCategory   BarrierCategoryCode?
+  userConfirmationState String               @default("CONFIRMED") // CONFIRMED, MODIFIED, REJECTED
+  
+  resolved              Boolean              @default(false)
+  resolvedAt            DateTime?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+
+  interventions         ActionIntervention[]
+
+  @@index([actionId])
+  @@index([categoryCode])
+}
+
+model Intervention {
+  id                  String               @id @default(uuid())
+  name                String
+  code                String               @unique // e.g. "INT_MMA", "INT_CLARIFY", "INT_RESOURCE"
+  targetBarrierCode   BarrierCategoryCode
+  barrierDef          BarrierDefinition    @relation(fields: [targetBarrierCode], references: [code])
+  summary             String
+  instructions        String
+  safetyLevel         String               @default("STANDARD") // STANDARD, GENTLE, HIGH_SENSITIVITY
+  evidenceStatus      String               @default("SOPET_PROTOCOL_VALIDATED")
+  version             Int                  @default(1)
+  isPublished         Boolean              @default(true)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  actionInterventions ActionIntervention[]
+}
+
+model ActionIntervention {
+  id              String       @id @default(uuid())
+  actionId        String
+  action          Action       @relation(fields: [actionId], references: [id], onDelete: Cascade)
+  barrierId       String?
+  barrier         Barrier?     @relation(fields: [barrierId], references: [id], onDelete: SetNull)
+  interventionId  String
+  intervention    Intervention @relation(fields: [interventionId], references: [id], onDelete: Cascade)
+  outcomeNotes    String?
+  isHelpful       Boolean?
+  appliedAt       DateTime     @default(now())
+
+  @@index([actionId])
+  @@index([interventionId])
+}
+
+model MMA {
+  id                  String       @id @default(uuid())
+  parentActionId      String
+  parentAction        Action       @relation("ParentAction", fields: [parentActionId], references: [id], onDelete: Cascade)
+  
+  title               String       // Concrete micro-action
+  timeframeMinutes    Int          @default(15) // Smallest meaningful forward movement
+  status              ActionStatus @default(PENDING) // PENDING, IN_PROGRESS, COMPLETED
+  
+  // Rule: Completing MMA does NOT automatically complete Parent Action!
+  resumedParentAction Boolean      @default(false)
+
+  startedAt           DateTime?
+  completedAt         DateTime?
+  createdAt           DateTime     @default(now())
+  updatedAt           DateTime     @updatedAt
+
+  @@index([parentActionId])
+}
+
+// ==========================================
+// 5. INTERRUPTIONS & RESTART PROTOCOL
+// ==========================================
+
+enum InterruptionType {
+  PLANNED
+  EXTERNAL
+  BARRIER_DRIVEN
+  PRIORITY_DRIVEN
+  MEANING_DRIVEN
+}
+
+enum RestartDecision {
+  RESUME
+  ADJUST
+  REDUCE_ACTION
+  CHANGE_NMA
+  PAUSE_GOAL
+  STRATEGICALLY_DISCONTINUE
+}
+
+model Interruption {
+  id                  String           @id @default(uuid())
+  goalId              String
+  goal                Goal             @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  interruptionType    InterruptionType
+  causeDescription    String
+  startedAt           DateTime         @default(now())
+  restarts            Restart[]
+
+  @@index([goalId])
+}
+
+model Restart {
+  id                   String           @id @default(uuid())
+  interruptionId       String
+  interruption         Interruption     @relation(fields: [interruptionId], references: [id], onDelete: Cascade)
+  
+  // 5 Restart Protocol Questions
+  isStillMeaningful    Boolean          // 1. Is the goal still meaningful?
+  whatChanged          String           // 2. What changed in circumstances?
+  rootCause            String           // 3. What caused the interruption?
+  isPlanRealistic      Boolean          // 4. Is the previous plan realistic?
+  restartDecision      RestartDecision  // 5. Decision
+  
+  restartActionTitle   String           // Immediate tangible restart action
+  restartedAt          DateTime         @default(now())
+  daysElapsed          Float?           // Restart velocity tracking
+
+  @@index([interruptionId])
+}
+
+// ==========================================
+// 6. KPIS & PROGRESS TRACKING
+// ==========================================
+
+model KPI {
+  id           String     @id @default(uuid())
+  goalId       String
+  goal         Goal       @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  name         String
+  unit         String
+  targetValue  Float
+  currentValue Float      @default(0)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  values       KPIValue[]
+
+  @@index([goalId])
+}
+
+model KPIValue {
+  id         String   @id @default(uuid())
+  kpiId      String
+  kpi        KPI      @relation(fields: [kpiId], references: [id], onDelete: Cascade)
+  value      Float
+  recordedAt DateTime @default(now())
+  notes      String?
+
+  @@index([kpiId])
+  @@index([recordedAt])
+}
+
+// ==========================================
+// 7. WEEKLY REVIEW, LESSONS & ADJUSTMENTS
+// ==========================================
+
+model WeeklyReview {
+  id                           String       @id @default(uuid())
+  userId                       String
+  user                         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goalId                       String
+  goal                         Goal         @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  weekEndingDate               DateTime
+  
+  // 5 Standard Reflection Questions (Private content)
+  meaningfulProgress           String
+  actionsThatMattered          String
+  whatGotInTheWay              String
+  interventionsThatHelped      String?
+  interventionsThatDidNotHelp  String?
+  interruptionExperienced      Boolean      @default(false)
+  restartDetails               String?
+
+  // Outcomes
+  nextNmaTitle                 String
+  aiSummaryDraft               String?
+  aiSummaryConfirmed           Boolean      @default(false)
+  
+  // Privacy
+  isClientEncrypted            Boolean      @default(false)
+  ciphertextPayload            String?
+  encryptionMetadata           String?
+
+  createdAt                    DateTime     @default(now())
+  updatedAt                    DateTime     @updatedAt
+
+  lessons                      Lesson[]
+  adjustments                  Adjustment[]
+
+  @@index([userId])
+  @@index([goalId])
+  @@index([weekEndingDate])
+}
+
+model Lesson {
+  id                 String        @id @default(uuid())
+  userId             String
+  user               User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  goalId             String
+  goal               Goal          @relation(fields: [goalId], references: [id], onDelete: Cascade)
+  weeklyReviewId     String?
+  weeklyReview       WeeklyReview? @relation(fields: [weeklyReviewId], references: [id], onDelete: SetNull)
+
+  lessonText         String        // Personal learning from execution rhythm
+  adjustmentText     String        // Concrete adjustment
+  relatedBarrierCode BarrierCategoryCode?
+
+  createdAt          DateTime      @default(now())
+
+  @@index([userId])
+  @@index([goalId])
+}
+
+model Adjustment {
+  id             String       @id @default(uuid())
+  weeklyReviewId String
+  weeklyReview   WeeklyReview @relation(fields: [weeklyReviewId], references: [id], onDelete: Cascade)
+  description    String
+  implemented    Boolean      @default(false)
+  createdAt      DateTime     @default(now())
+
+  @@index([weeklyReviewId])
+}
+
+// ==========================================
+// 8. KNOWLEDGE BASE & AI GOVERNANCE
+// ==========================================
+
+enum KnowledgeEntryType {
+  BARRIER_DEFINITION
+  DISCRIMINATING_QUESTION
+  INTERVENTION
+  SCENARIO
+  NMA_EXAMPLE
+  MMA_EXAMPLE
+  WARNING
+  ESCALATION
+  FAQ
+  LOCALIZATION_NOTE
+  EVIDENCE_NOTE
+}
+
+model KnowledgeBaseEntry {
+  id             String             @id @default(uuid())
+  code           String             @unique
+  type           KnowledgeEntryType
+  domain         String             // e.g. "ACIF", "MOMENTUM", "RESTART"
+  barrierCode    BarrierCategoryCode?
+  title          String
+  content        String
+  language       String             @default("en")
+  status         String             @default("PUBLISHED") // DRAFT, REVIEW, PUBLISHED, ARCHIVED
+  evidenceStatus String             @default("SOPET_PROTOCOL_VALIDATED")
+  owner          String             @default("SOPET_METHODOLOGY_LEAD")
+  version        Int                @default(1)
+  safetyLevel    String             @default("STANDARD")
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+
+  @@index([type])
+  @@index([barrierCode])
+}
+
+model AIInteractionMetadata {
+  id              String   @id @default(uuid())
+  interactionType String   // BARRIER_SUGGESTION, MMA_SUGGESTION, REVIEW_SUMMARY, NMA_REFINEMENT
+  provider        String   @default("gemini")
+  modelName       String
+  promptVersion   String
+  userConsentGiven Boolean @default(true) // Explicit consent check
+  sanitizedTokens Int?
+  latencyMs       Int?
+  wasAccepted     Boolean?
+  wasEdited       Boolean?
+  createdAt       DateTime @default(now())
+
+  @@index([interactionType])
+  @@index([createdAt])
+}
+
+// ==========================================
+// 9. AUDIT, SECURITY, PRIVACY & ANALYTICS
+// ==========================================
+
+model AuditLog {
+  id             String   @id @default(uuid())
+  actorId        String?
+  actor          User?    @relation("UserAuditLogs", fields: [actorId], references: [id], onDelete: SetNull)
+  actorEmail     String?
+  action         String   // e.g. "USER_LOGIN", "ROLE_ASSIGNED", "ACCOUNT_SUSPENDED"
+  targetId       String?
+  targetType     String?  // "USER", "ROLE", "KNOWLEDGE_BASE"
+  detailsJson    String?  // Sanitized details (NO private text)
+  ipAddress      String?
+  userAgent      String?
+  result         String   @default("SUCCESS") // SUCCESS, FAILURE
+  reason         String?
+  createdAt      DateTime @default(now())
+
+  @@index([action])
+  @@index([actorId])
+  @@index([createdAt])
+}
+
+model AnalyticsEvent {
+  id         String   @id @default(uuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  eventType  String   // GOAL_CREATED, ACTION_COMPLETED, BARRIER_CONFIRMED, MMA_CREATED
+  metadata   String?  // Strictly structured JSON (NO free-text private ideas)
+  createdAt  DateTime @default(now())
+
+  @@index([eventType])
+  @@index([createdAt])
+}
+
+model NotificationPreference {
+  id                     String   @id @default(uuid())
+  userId                 String   @unique
+  user                   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emailWeeklyReview      Boolean  @default(true)
+  emailRestartReminders  Boolean  @default(true)
+  inAppNmaPrompts        Boolean  @default(true)
+  inAppBarrierCheckins   Boolean  @default(true)
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @updatedAt
+}
+
+model EncryptionKeyMetadata {
+  id             String   @id @default(uuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  keyId          String   // Unique client key fingerprint
+  algorithm      String   @default("AES-256-GCM")
+  wrappedKeyData String   // User-wrapped key payload
+  salt           String
+  iterations     Int      @default(600000) // PBKDF2 iterations
+  createdAt      DateTime @default(now())
+
+  @@index([userId])
+}
+
+model AccountDeletionRequest {
+  id           String    @id @default(uuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  requestedAt  DateTime  @default(now())
+  scheduledFor DateTime
+  confirmedAt  DateTime?
+  cancelledAt  DateTime?
+  status       String    @default("PENDING") // PENDING, COMPLETED, CANCELLED
+
+  @@index([userId])
+  @@index([status])
+}

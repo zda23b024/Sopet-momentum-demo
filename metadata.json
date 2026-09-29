@@ -1,0 +1,6 @@
+{
+  "name": "SOPET Momentum",
+  "description": "Personal execution and developmental-progress web application prototype by ACoS EduTech and Consultancy.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
