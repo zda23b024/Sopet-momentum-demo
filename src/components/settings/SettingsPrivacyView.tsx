@@ -150,7 +150,7 @@ export const SettingsPrivacyView: React.FC = () => {
 
       {/* Data Management & Export */}
       <div className="bg-white rounded-2xl p-6 border border-gray-200 shadow-xs space-y-4">
-        <h2 className="text-base font-bold text-[#0E3C5B]">System Data Controls</h2>
+        <h2 className="text-base font-bold text-[#0E3C5B]">Prototype Data Controls</h2>
         <div className="flex flex-col sm:flex-row items-center gap-3">
           <button
             onClick={handleExportData}
@@ -165,11 +165,11 @@ export const SettingsPrivacyView: React.FC = () => {
             className="w-full sm:w-auto flex items-center justify-center gap-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 text-xs font-semibold px-4 py-2.5 rounded-xl transition"
           >
             <RotateCcw className="w-4 h-4" />
-            <span>Reset to Amina Default</span>
+            <span>Reset Demo to Amina Default</span>
           </button>
         </div>
         <span className="text-[11px] text-gray-500 block">
-          Restores baseline seed data for Amina's catering business development scenario.
+          Resetting will restore the default scenario for Amina's catering business pilot.
         </span>
       </div>
     </div>

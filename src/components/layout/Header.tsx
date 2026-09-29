@@ -55,7 +55,7 @@ export const Header: React.FC = () => {
                   SOPET Momentum
                 </span>
                 <span className="hidden md:inline-flex items-center text-[10px] uppercase font-semibold tracking-wider bg-[#155A8A] text-[#EAF4FB] px-2 py-0.5 rounded">
-                  Pilot v1.0
+                  Demo
                 </span>
               </div>
               <span className="text-[11px] text-gray-300 font-normal tracking-wide hidden sm:block">

@@ -41,21 +41,14 @@ export const BarrierReviewModal: React.FC = () => {
   if (!isBarrierReviewOpen || !action) return null;
 
   // Step 1 -> Step 2: Analyze free-text with contextual AI
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-
-  const handleAnalyzeExplanation = async (e: React.FormEvent) => {
+  const handleAnalyzeExplanation = (e: React.FormEvent) => {
     e.preventDefault();
     if (!userExplanation.trim()) return;
 
-    setIsAnalyzing(true);
-    try {
-      const suggestion = await ContextualAiService.suggestBarrierAsync(userExplanation, action.title);
-      setAiSuggestion(suggestion);
-      setSelectedCategory(suggestion.categoryCode);
-      setStep(2);
-    } finally {
-      setIsAnalyzing(false);
-    }
+    const suggestion = ContextualAiService.suggestBarrier(userExplanation, action.title);
+    setAiSuggestion(suggestion);
+    setSelectedCategory(suggestion.categoryCode);
+    setStep(2);
   };
 
   // Step 2: Accept AI suggestion
@@ -189,10 +182,10 @@ export const BarrierReviewModal: React.FC = () => {
               <div className="flex justify-end pt-2">
                 <button
                   type="submit"
-                  disabled={!userExplanation.trim() || isAnalyzing}
+                  disabled={!userExplanation.trim()}
                   className="flex items-center gap-2 bg-[#155A8A] hover:bg-[#0E3C5B] disabled:opacity-50 text-white text-xs sm:text-sm font-semibold px-5 py-2.5 rounded-xl transition shadow-xs"
                 >
-                  <span>{isAnalyzing ? 'Analyzing via ACIF Engine...' : 'Explore Possible Barrier'}</span>
+                  <span>Explore Possible Barrier</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
               </div>

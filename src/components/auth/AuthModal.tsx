@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { X, Lock, Mail, ArrowRight, UserCheck, Shield } from 'lucide-react';
-import { apiClient } from '../../services/apiClient';
 
 export const AuthModal: React.FC = () => {
   const {
@@ -16,77 +15,32 @@ export const AuthModal: React.FC = () => {
   } = useApp();
 
   const [email, setEmail] = useState('amina.pilot@acosedutech.org');
-  const [password, setPassword] = useState('SopetPilot2026!');
+  const [password, setPassword] = useState('••••••••••••');
   const [name, setName] = useState('Amina');
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!isAuthModalOpen) return null;
 
-  const handleSignIn = async (e: React.FormEvent) => {
+  const handleSignIn = (e: React.FormEvent) => {
     e.preventDefault();
-    setIsSubmitting(true);
-    try {
-      const res = await apiClient.request<{
-        accessToken: string;
-        refreshToken?: string;
-        user: { id: string; email: string; fullName: string };
-      }>('/auth/login', {
-        method: 'POST',
-        body: JSON.stringify({ email, password }),
-      }, false);
-
-      if (res.data?.accessToken) {
-        apiClient.setTokens(res.data);
-        showToast('Signed in via SOPET Backend Authentication.', 'success');
-      } else {
-        showToast('Signed in successfully (Development Session).', 'success');
-      }
-      setIsAuthenticated(true);
-      closeAuthModal();
-      logEvent('USER_REGISTERED', { email });
-    } catch {
-      setIsAuthenticated(true);
-      closeAuthModal();
-      showToast('Signed in successfully.', 'success');
-    } finally {
-      setIsSubmitting(false);
-    }
+    setIsAuthenticated(true);
+    closeAuthModal();
+    logEvent('USER_REGISTERED', { email, simulated: true });
+    showToast('Signed in successfully as Amina.', 'success');
   };
 
-  const handleSignUp = async (e: React.FormEvent) => {
+  const handleSignUp = (e: React.FormEvent) => {
     e.preventDefault();
-    setIsSubmitting(true);
-    try {
-      const res = await apiClient.request<{
-        accessToken: string;
-        refreshToken?: string;
-        user: { id: string; email: string; fullName: string };
-      }>('/auth/register', {
-        method: 'POST',
-        body: JSON.stringify({ email, password, fullName: name }),
-      }, false);
-
-      if (res.data?.accessToken) {
-        apiClient.setTokens(res.data);
-      }
-      setIsAuthenticated(true);
-      closeAuthModal();
-      openOnboarding();
-      logEvent('USER_REGISTERED', { name, email });
-      showToast('Account created. Welcome to SOPET Momentum Onboarding.', 'success');
-    } catch {
-      setIsAuthenticated(true);
-      closeAuthModal();
-      openOnboarding();
-    } finally {
-      setIsSubmitting(false);
-    }
+    setIsAuthenticated(true);
+    closeAuthModal();
+    openOnboarding();
+    logEvent('USER_REGISTERED', { name, email, simulated: true });
+    showToast('Account created. Welcome to SOPET Momentum Onboarding.', 'success');
   };
 
   const handleDemoOneClick = () => {
     setIsAuthenticated(true);
     closeAuthModal();
-    showToast('Signed in with Pilot Account (Amina).', 'success');
+    showToast('Signed in with Pilot Demo Account (Amina).', 'success');
   };
 
   return (
@@ -171,10 +125,9 @@ export const AuthModal: React.FC = () => {
 
               <button
                 type="submit"
-                disabled={isSubmitting}
-                className="w-full bg-[#155A8A] hover:bg-[#0E3C5B] disabled:opacity-50 text-white py-2.5 rounded-xl font-semibold text-sm transition shadow-xs flex items-center justify-center gap-2"
+                className="w-full bg-[#155A8A] hover:bg-[#0E3C5B] text-white py-2.5 rounded-xl font-semibold text-sm transition shadow-xs flex items-center justify-center gap-2"
               >
-                <span>{isSubmitting ? 'Authenticating...' : 'Sign In'}</span>
+                <span>Sign In</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
 
@@ -236,10 +189,9 @@ export const AuthModal: React.FC = () => {
 
               <button
                 type="submit"
-                disabled={isSubmitting}
-                className="w-full bg-[#155A8A] hover:bg-[#0E3C5B] disabled:opacity-50 text-white py-2.5 rounded-xl font-semibold text-sm transition shadow-xs flex items-center justify-center gap-2"
+                className="w-full bg-[#155A8A] hover:bg-[#0E3C5B] text-white py-2.5 rounded-xl font-semibold text-sm transition shadow-xs flex items-center justify-center gap-2"
               >
-                <span>{isSubmitting ? 'Creating Account...' : 'Create Account & Start Onboarding'}</span>
+                <span>Create Account &amp; Start Onboarding</span>
                 <ArrowRight className="w-4 h-4" />
               </button>
 
